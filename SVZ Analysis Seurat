@@ -1,0 +1,418 @@
+#Script by Amy Elias in the laboratory of Dr. Jill Kreiling 
+#2019-2021
+#Script based off of Vignettes on Seurat
+#First half of the code was conducted using a batch script on Oscar
+#This script is for the primiReference paper, and it is only used to analyze Males from the SVZ data and only to look at primiRNA sequences
+##Stuart T, Butler A, Hoffman P, Hafemeister C, Papalexi E, Mauck WM 3rd, Hao Y, Stoeckius M, Smibert P, Satija R. Comprehensive Integration of Single-Cell Data. Cell. 2019 Jun 13;177(7):1888-1902.e21. doi: 10.1016/j.cell.2019.05.031. Epub 2019 Jun 6. PMID: 31178118; PMCID: PMC6687398.
+#SeuratV3
+
+#Load Packages
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(cowplot)
+
+#Load in Data
+youngsvzmale.data <- Read10X(data.dir=(filtered_feature_bc_matrix/"))
+svzyoungmale <- CreateSeuratObject(counts = youngsvzmale.data, project = "SVZ_Young_Male", min.cells = 5, min.features = 200)
+oldsvzmale.data <- Read10X(data.dir=(filtered_feature_bc_matrix/"))
+svzoldmale <- CreateSeuratObject(counts = oldsvzmale.data, project = "SVZ_Old_Male", min.cells = 5, min.features = 200)
+#Filter Based on Features and Cells with Features
+svz <- merge(svzyoungmale, y = c(svzoldmale), add.cell.ids = c("YoungMale", "OldMale"), project = "SVZAE")
+svz
+levels(svz)
+
+svz[["percent.mt"]] <- PercentageFeatureSet(svz, pattern = "^mt-")
+head(svz@meta.data, 100)
+
+VlnPlot(svz, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+pdf(file="primiReference_SVZAEMales_QCPlot1_April282021.pdf", paper="legal")
+QCplot1 <- FeatureScatter(svz, feature1 = "nCount_RNA", feature2 = "percent.mt")
+QCplot1
+dev.off()
+pdf(file="primiReference_SVZAEMales_QCPlot2_April282021.pdf", paper="legal")
+QCplot2 <- FeatureScatter(svz, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+QCplot2
+dev.off()
+pdf(file="primiReference_SVZAEMales_QCPlot3_April282021.pdf", paper="legal")
+CombinePlots(plots = list(QCplot1, QCplot2))
+dev.off()
+
+#Create histograms and find SD to then subset desirable cells to continue processing and clustering
+
+pdf(file="primiReference_SVZAEMales_Histogram_FrequenceofRNAFeaturespercell_April282021.pdf", paper="legal")
+hist_1 <- hist((svz$nFeature_RNA), main = 'Frequency of RNA Features per Cell in the SVZ', xlab = 'RNA Features per Cell', breaks=20)
+hist_1
+dev.off()
+sd(svz$nFeature_RNA)
+
+pdf(file = "primiReference_SVZAEMales_Histogram_PercentMTContamination_April282021.pdf", paper="legal")
+hist2 <- hist((svz$percent.mt), main = 'Percent of Mt Gene Contamination per Cell in the SVZ', breaks=40, xlab = 'Percent Mt Content per Cell', xlim=c(0,15))
+hist2
+dev.off()
+sd(svz$percent.mt)
+
+pdf(file="primiReference_SVZAEMales_Histogram_FrequenceofCountspercell_April282021.pdf", paper="legal")
+hist3 <- hist((svz$nCount_RNA), main = 'Frequency of Counts per Cell in the SVZ', xlab = 'Counts per Cell', xlim=c(0,60000))
+hist3
+dev.off()
+sd(svz$nCount_RNA)
+
+#Standard Deviation of %mt = 2.031977, stdev of nfeatures = 1692.056 with peak at 1,000, stdev of ncount = 9458.793 we therefore subset based on this (2SD + peak)
+svz <- subset(svz, subset = nFeature_RNA > 200 & nFeature_RNA < 4384.112 & percent.mt < 4.063954)
+#Normalize Data
+svz <- NormalizeData(svz, normalization.method = "LogNormalize", scale.factor = 10000)
+
+#Normalized Features
+svz[["RNA"]]@data
+
+#Find Variable Features Overall
+svz <- FindVariableFeatures(svz, selection.method = "vst", nfeatures = 2000)
+top20 <- head(VariableFeatures(svz), 20)
+VarFeatPlot1 <- VariableFeaturePlot(svz)
+pdf(file="variablefeatureplot.pdf", paper="legal")
+LabelPoints(plot = VarFeatPlot1, points = top20, repel = TRUE)
+dev.off()
+VarFeatPlot1 <- VariableFeaturePlot(svz)
+VarFeatPlot2 <- LabelPoints(plot = VarFeatPlot1, points = top20, repel = TRUE)
+
+
+all.genes <- rownames(svz)
+svz <- ScaleData(svz, features = all.genes)
+
+#Perform PCA
+svz <- RunPCA(svz, features = VariableFeatures(object = svz))
+
+
+#Dimensionality
+ElbowPlot(svz)
+pdf(file="primiReference_SVZAEMales_Elbowplot_April282021.pdf", paper="legal")
+ElbowPlot(svz)
+dev.off()
+table(Idents(svz))
+svz <- JackStraw(svz, num.replicate = 100)
+svz<- ScoreJackStraw(svz, dims = 1:20)
+pdf(file="primiReference_SVZAEMales_Jacksatrawplot_April282021.pdf", paper="legal")
+JackStrawPlot(svz, dims = 1:20)
+dev.off()
+
+#Based on ElbowPlot want to cluster with 50
+
+#Cluster Cells
+svz <- FindNeighbors(svz, dims = 1:50)
+svz <- FindClusters(svz, resolution = 2.0)
+
+#Run UMAP
+svz <- RunUMAP(svz, dims = 1:50)
+pdf(file="primiReference_SVZAEMales_UMAPunlabeled_April282021.pdf", paper="legal")
+DimPlot(svz, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+dev.off()
+table(Idents(svz))
+
+
+#UMap Group by Age
+pdf(file="primiReference_SVZAEMales_UMAPunlabeledbysex_April282021.pdf", paper="legal")
+DimPlot(svz, reduction = "umap", pt.size = 0.5, group.by = "orig.ident")
+dev.off()
+table(Idents(svz))
+
+#How Many Cells in Each Cluster Grouped by Condition
+CellNumberbySex <- table(Idents(svz), svz$orig.ident)
+PercentCellbySex <- prop.table(table(Idents(svz), svz$orig.ident), margin = 2)
+write.csv(CellNumberbySex, file="primiReference_SVZAEMales_CellNumberbySex_beforeABA_April282021021.csv")
+write.csv(PercentCellbySex, file="primiReference_SVZAEMales_PercentCellbySex_beforeABA_April282021.csv")
+save.image(file = "primiReference_SVZAEMales_BeforeABA_April282021.RData")
+#######Integrate Allen Brain Atlas Data to Label Neurons and Overall cell Types
+#https://github.com/satijalab/Integration2019/blob/master/preprocessing_scripts/allen_brain.R
+#https://satijalab.org/signac/articles/mouse_brain_vignette.html
+#https://www.dropbox.com/s/kqsy9tvsklbu7c4/allen_brain.rds?dl=0
+#https://www.dropbox.com/s/uwrs4k5tc77tqkv/allen_brain.zip?dl=0
+#https://portal.brain-map.org/atlases-and-data/rnaseq
+#Stuart T, Butler A, Hoffman P, Hafemeister C, Papalexi E, Mauck WM 3rd, Hao Y, Stoeckius M, Smibert P, Satija R. Comprehensive Integration of Single-Cell Data. Cell. 2019 Jun 13;177(7):1888-1902.e21. doi: 10.1016/j.cell.2019.05.031. Epub 2019 Jun 6. PMID: 31178118; PMCID: PMC6687398.
+#Tasic B, Menon V, Nguyen TN, et al. Adult mouse cortical cell taxonomy revealed by single cell transcriptomics. Nat Neurosci. 2016;19(2):335-346. doi:10.1038/nn.4216
+allen <- read.table(file = "/users/aelias1/data/allen_brain/mouse_VISp_2018-06-14_exon-matrix.csv",
+                    sep = ',', stringsAsFactors = FALSE, header = TRUE)
+allen$X <- NULL
+allen <- as.matrix(x = allen)
+genes <- read.table(file = "/users/aelias1/data/allen_brain/mouse_VISp_2018-06-14_genes-rows.csv",
+                    sep = ',', stringsAsFactors = FALSE, header = TRUE)
+rownames(x = allen) <- make.unique(names = genes$gene_symbol)
+meta.data <- read.csv(file = "/users/aelias1/data/allen_brain/mouse_VISp_2018-06-14_samples-columns.csv",
+                      row.names = 1, stringsAsFactors = FALSE)
+
+al <- CreateSeuratObject(counts = allen, project = 'VISp', meta.data = meta.data, min.cells = 10)
+low.q.cells <- rownames(x = meta.data[meta.data$class %in% c('Low Quality', 'No Class'), ])
+ok.cells <- rownames(x = meta.data)[!(rownames(x = meta.data) %in% low.q.cells)]
+al <- al[, ok.cells]
+al <- NormalizeData(object = al)
+al <- FindVariableFeatures(object = al, nfeatures = 2000)
+al <- ScaleData(object = al)
+al <- RunPCA(object = al, npcs = 50, verbose = FALSE)
+al <- RunUMAP(object = al, dims = 1:50, nneighbors = 5)
+
+##Begin Transfer Anchors 
+
+al <- FindVariableFeatures(
+  object = al,
+  nfeatures = 5000)
+
+transfer.anchors <- FindTransferAnchors(
+  reference = al,
+  query = svz,
+  reduction = 'cca',
+  dims = 1:50)
+
+
+predicted.labels <- TransferData(
+  anchorset = transfer.anchors,
+  refdata = al$subclass,
+  weight.reduction = svz[['pca']],
+  dims = 1:50
+)
+
+svz <- AddMetaData(object = svz, metadata = predicted.labels)
+
+pdf(file="primiReference_SVZAEMales_UMAPABA2_April282021.pdf", paper="legal")
+allenbrainum <- DimPlot(al, group.by = 'subclass', label = TRUE, repel = TRUE) + NoLegend() + ggtitle('AllenBrainAtlas')
+allenbrainumf
+dev.off()f
+pdf(file="primiReference_SVZAEMales_UMAPABAIntegration2_April282021.pdf", paper="legal")
+abaintumap <- DimPlot(svz, group.by = 'predicted.id', label = TRUE, repel = TRUE) + NoLegend() + ggtitle('SVZ_AllenBrainRef')
+abaintumap
+dev.off()
+
+for(i in levels(svz)) {
+  cells_to_reid <- WhichCells(svz, idents = i)
+  newid <- names(sort(table(svz$predicted.id[cells_to_reid]),decreasing=TRUE))[1]
+  Idents(svz, cells = cells_to_reid) <- newid
+}
+save.image(file = "primiReference_SVZAEMales_afterABA_April282021.RData")
+#How Many Cells in Each Cluster Grouped by Sex
+CellNumberbySex <- table(Idents(svz), svz$orig.ident)
+PercentCellbySex <- prop.table(table(Idents(svz), svz$orig.ident), margin = 2)
+write.csv(CellNumberbySex, file="primiReference_SVZAEMales_CellNumberbySex_ABA_April282021021.csv")
+write.csv(PercentCellbySex, file="primiReference_SVZAEMales_PercentCellbySex_ABA_April282021.csv")
+
+
+
+#AMY E. ELIAS laboratory of Dr. Jill A. Kreiling 
+#Our Male SVZ data set 3-4 mo young male and 24-25mo old male mice 
+#Code adapted from Seurat Vignettes
+#Code was originally run Aprril 29,2021, but it was compiled, simplified,and slightly modified June 23, 2021 and thus re run
+#The changes made June 23 were switching OPCandCOP_2 to Unknown_3 based on DotPlot data and cleaning up code overall of errors and making it flow easier thus I changed all the dates of documents to June23
+#Data was downloaded from aforementioned R data 
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(cowplot)
+#Rename Clusters with appropriate IDs 
+#Mural Cell types were defined using He, L., Vanlandewijck, M., Raschperger, E. et al. Analysis of the brain mural cell transcriptome. Sci Rep 6, 35108 (2016). https://doi.org/10.1038/srep35108
+#Other cell types were defined using:
+#Ximerakis, M., Lipnick, S.L., Innes, B.T. et al. Single-cell transcriptomic profiling of the aging mouse brain. Nat Neurosci 22, 1696–1708 (2019). https://doi.org/10.1038/s41593-019-0491-3
+#Zywitza V, Misios A, Bunatyan L, Willnow TE, Rajewsky N. Single-Cell Transcriptomics Characterizes Cell Types in the Subventricular Zone and Uncovers Molecular Defects Impairing Adult Neurogenesis. Cell Rep. 2018 Nov 27;25(9):2457-2469.e8. doi: 10.1016/j.celrep.2018.11.003. PMID: 30485812.
+#Boareto M, Iber D, Taylor V. Differential interactions between Notch and ID factors control neurogenesis by modulating Hes factor autoregulation. Development. 2017 Oct 1;144(19):3465-74.
+#Marques S, Zeisel A, Codeluppi S, van Bruggen D, Falcão AM, Xiao L, Li H, Häring M, Hochgerner H, Romanov RA, Gyllborg D. Oligodendrocyte heterogeneity in the mouse juvenile and adult central nervous system. Science. 2016 Jun 10;352(6291):1326-9.
+#Shah PT, Stratton JA, Stykel MG, Abbasi S, Sharma S, Mayr KA, Koblinger K, Whelan PJ, Biernaskie J. Single-cell transcriptomics and fate mapping of ependymal cells reveals an absence of neural stem cell function. Cell. 2018 May 3;173(4):1045-57.
+#Mateo JL, van den Berg DL, Haeussler M, Drechsel D, Gaber ZB, Castro DS, Robson P, Lu QR, Crawford GE, Flicek P, Ettwiller L. Characterization of the neural stem cell gene regulatory network identifies OLIG2 as a multifunctional regulator of self-renewal. Genome research. 2015 Jan 1;25(1):41-56.
+#Herbert J, Wilcox JN, Pham KT, Fremeau RT Jr, Zeviani M, Dwork A, Soprano DR, Makover A, Goodman DS, Zimmerman EA, et al. Transthyretin: a choroid plexus-specific transport protein in human brain. The 1986 S. Weir Mitchell award. Neurology. 1986 Jul;36(7):900-11. doi: 10.1212/wnl.36.7.900. PMID: 3714052.
+
+#Find Subtype of Oligodendrocytes via DotPlots based on papers from
+#Marques S, Zeisel A, Codeluppi S, van Bruggen D, Mendanha Falcão A, Xiao L, Li H, Häring M, Hochgerner H, Romanov RA, Gyllborg D, Muñoz Manchado A, La Manno G, Lönnerberg P, Floriddia EM, Rezayee F, Ernfors P, Arenas E, Hjerling-Leffler J, Harkany T, Richardson WD, Linnarsson S, Castelo-Branco G. Oligodendrocyte heterogeneity in the mouse juvenile and adult central nervous system. Science. 2016 Jun 10;352(6291):1326-1329. doi: 10.1126/science.aaf6463. PMID: 27284195; PMCID: PMC5221728.
+#Zywitza V, Misios A, Bunatyan L, Willnow TE, Rajewsky N. Single-Cell Transcriptomics Characterizes Cell Types in the Subventricular Zone and Uncovers Molecular Defects Impairing Adult Neurogenesis. Cell Rep. 2018 Nov 27;25(9):2457-2469.e8. doi: 10.1016/j.celrep.2018.11.003. PMID: 30485812.
+#COPs
+OligoGenes <- c("Klk6", "Apod", "Mog", "Serinc5", "Plp1", "Mal", "Tcf7l2", "Tns3", "Gpr17", "Bmp4", "Sox6", "Neu4", "Fyn", "Slc1a3", "Tmem100", "Fabp7", "Cspg4", "Sox2")
+#OPC = Ascl1", "Cspg4", "Fabp7", "Tmem100", "Slc1a3"
+#COP = "Neu4", "Sox6", "Bmp4", "Gpr17", "Tns3", "FYN" 
+#NEWLY FORMED = Casr", "Tcf7l2"
+#MFOL "Mal", "Plp1", "Serinc5", "Mog", "Ctps"
+#Mature Klk6, Apod Trf and Pmp22)
+DotPlot(svz, features=OligoGenes, col.min=0, cols=c("white", "blue")) + theme(text=element_text(size=8), axis.text.x = element_text(angle = 45, hjust = 1))
+
+#Determine subtypes of Mural and other cell types via Dotplots from papers:
+#Shah PT, Stratton JA, Stykel MG, Abbasi S, Sharma S, Mayr KA, Koblinger K, Whelan PJ, Biernaskie J. Single-cell transcriptomics and fate mapping of ependymal cells reveals an absence of neural stem cell function. Cell. 2018 May 3;173(4):1045-57.
+#Herbert J, Wilcox JN, Pham KT, Fremeau RT Jr, Zeviani M, Dwork A, Soprano DR, Makover A, Goodman DS, Zimmerman EA, et al. Transthyretin: a choroid plexus-specific transport protein in human brain. The 1986 S. Weir Mitchell award. Neurology. 1986 Jul;36(7):900-11. doi: 10.1212/wnl.36.7.900. PMID: 3714052.
+#He, L., Vanlandewijck, M., Raschperger, E. et al. Analysis of the brain mural cell transcriptome. Sci Rep 6, 35108 (2016). https://doi.org/10.1038/srep35108
+#Thiel G. Synapsin I, synapsin II, and synaptophysin: marker proteins of synaptic vesicles. Brain Pathology. 1993 Jan;3(1):87-95.
+#Saito K, Koike T, Kawashima F, Kurata H, Shibuya T, Satoh T, Hata Y, Yamada H, Mori T. Identification of NeuN immunopositive cells in the adult mouse subventricular zone. Journal of Comparative Neurology. 2018 Aug 15;526(12):1927-42.
+#Zywitza V, Misios A, Bunatyan L, Willnow TE, Rajewsky N. Single-Cell Transcriptomics Characterizes Cell Types in the Subventricular Zone and Uncovers Molecular Defects Impairing Adult Neurogenesis. Cell Rep. 2018 Nov 27;25(9):2457-2469.e8. doi: 10.1016/j.celrep.2018.11.003. PMID: 30485812.
+DotPlot(svz, features= c("Tmem119", "Ptprc", "Ogn", "Rbfox3","Pdgfrb", "Tek", "Dnah12"), col.min=0, cols=c("white", "blue")) + theme(text=element_text(size=8), axis.text.x = element_text(angle = 45, hjust = 1))
+#Tmem119 and Ptprc = miicroglia
+#ptprc = immune cell
+#pdgfrb = pericyte
+#ogn = vlmc
+#tek = vascular endothelium 
+#Dnah12 = ependymal
+#Rbfox3 = Immature Neurons
+#Syp = Neurons
+
+#Detrmine Astrocytes from NSCs
+#Ximerakis, M., Lipnick, S.L., Innes, B.T. et al. Single-cell transcriptomic profiling of the aging mouse brain. Nat Neurosci 22, 1696–1708 (2019). https://doi.org/10.1038/s41593-019-0491-3
+#Zywitza V, Misios A, Bunatyan L, Willnow TE, Rajewsky N. Single-Cell Transcriptomics Characterizes Cell Types in the Subventricular Zone and Uncovers Molecular Defects Impairing Adult Neurogenesis. Cell Rep. 2018 Nov 27;25(9):2457-2469.e8. doi: 10.1016/j.celrep.2018.11.003. PMID: 30485812.
+
+AstroGenes <- c("Aqp4", "Slc1a2", "Slc1a3", "Gfap","Olig2", "Ascl1","Sox2", "Thbs4", "Sox9")
+DotPlot(svz, features=AstroGenes, col.min=0, cols=c("white", "blue")) + theme(text=element_text(size=8), axis.text.x = element_text(angle = 45, hjust = 1))
+#NSC = Sox9 = self renewal, Sox2, THBS4, 
+#AllAstrocyteandNSC = SLC1a3, SLC1a2, GFAP
+#Mature = Aqp4
+
+Allmarkers <- c("Syp", "Rbfox3", "Tmem119", "Ptprc", "Ttr","Dnah12","Pdgfrb", "Tek", "Aqp4", "Slc1a2", "Slc1a3", "Gfap",
+                "Klk6", "Apod", "Mog", "Serinc5", "Plp1", "Mal", "Tcf7l2", "Tns3", "Gpr17", "Bmp4", "Sox6", "Neu4", "Fyn", "Tmem100", "Fabp7", "Cspg4","Ascl1","Sox2", "Thbs4")
+DotPlot(svz, features=Allmarkers, col.min=0, cols=c("white", "blue")) + theme(text=element_text(size=8), axis.text.x = element_text(angle = 45, hjust = 1))
+
+#Based on these dotplotsand Allen Brain Atlas mapping,we have renmaed the clusters based on marker genes and ABA input
+#Although Aba gives specific neuronal subtypes, we chose to combine them into one giant neuron cluster for these purpooses
+SVZnewids <- c("Neuron", "Neuron", "MFOL_1", "Neuron", "Neuron", "MFOL_2", "Astrocyte_1", "Neuron", "Neuron", "Neuron",
+           "Mature Oligodendrocyte", "Microglia", "Neuron", "Neuron", "Neuron", "Neuron", "Immature Neuron", "OPCandCOP", "Neuron", "Astrocyte_2",
+           "Neuron", "Neuron", "Neuron", "Neuron", "Neural Stem Cell", "Neuron", "Neuron", "Neuron", "Neuron", "Neuron",
+           "Neuron", "Neuron", "Neuron", "Neuron", "Neuron", "Ependymal Cell", "Vascular Endothelium", "Unknown2", "Neuron", "Neuron",
+           "Neuron", "Neuron", "Pericyte", "Unknown1", "Neuron", "Neuron", "Neuron", "Neuron", "Neuron", "Neuron",
+           "Neuron", "Immune Cells", "Neuron", "Neuron", "Astrocyte_3", "Neuron", "Neuron", "Unknown_3", "Neuron", "Choroid Plexus")
+names(SVZnewids) <- levels(svz)
+svz <- RenameIdents(svz, SVZnewids)
+DimPlot(svz, reduction = "umap", label = TRUE, pt.size = 0.5, label.size=2.5, repel = TRUE)
+
+#SaveUMap
+pdf(file="primiReference_AESVZMales_UMAP_June232021.pdf", paper="legal")
+UMap1 <- DimPlot(svz, reduction = "umap", label = TRUE, pt.size = 0.5, label.size=0, repel = TRUE)
+UMap1
+dev.off()
+pdf(file="primiReference_AESVZMales_UMAPbyCondition_June232021.pdf", paper="legal")
+UMap2 <- DimPlot(svz, reduction = "umap", label = TRUE, pt.size = 0.5, label.size=2.5, group.by="orig.ident",repel = TRUE)
+UMap2
+dev.off()
+
+#Create new plots of post filtering QC
+VlnPlot(svz, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+pdf(file="primiReference_AESVZMales_QCFinalPlot1_Feb82022.pdf", paper="legal")
+QCFplot1 <- FeatureScatter(svz, feature1 = "nCount_RNA", feature2 = "percent.mt")
+QCFplot1
+dev.off()
+pdf(file="primiReference_AESVZMales_QCFinalPlot2_Feb82022.pdf", paper="legal")
+QCFplot2 <- FeatureScatter(svz, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+QCFplot2
+dev.off()
+pdf(file="primiReference_AESVZMales_QCFinalPlot3_Feb82022.pdf", paper="legal")
+CombinePlots(plots = list(QCFplot1, QCFplot2))
+dev.off()
+
+#Exclude Contaminants
+#Exclude Astrocyte 3 because of low cell count
+svz <- subset(svz, idents=c("Neuron", "Neuron", "MFOL_1", "Neuron", "Neuron", "MFOL_2", "Astrocyte_1", "Neuron", "Neuron", "Neuron",
+                            "Mature Oligodendrocyte", "Microglia", "Neuron", "Neuron", "Neuron", "Neuron", "Immature Neuron", "OPCandCOP", "Neuron", "Astrocyte_2",
+                            "Neuron", "Neuron", "Neuron", "Neuron", "Neural Stem Cell", "Neuron", "Neuron", "Neuron", "Neuron", "Neuron",
+                            "Neuron", "Neuron", "Neuron", "Neuron", "Neuron", "Ependymal Cell", "Vascular Endothelium", "Neuron", "Neuron",
+                            "Neuron", "Neuron", "Pericyte", "Neuron", "Neuron", "Neuron", "Neuron", "Neuron", "Neuron",
+                            "Neuron", "Immune Cells", "Neuron", "Neuron", "Neuron", "Neuron", "Neuron"))
+DimPlot(svz, reduction = "umap", label = TRUE, pt.size = 0.5, label.size=0, repel = TRUE)
+
+#Add %primary miRNA to metadata
+svz[["percent.primiR"]] <- PercentageFeatureSet(svz, pattern = "primiR")
+head(svz@meta.data, 100)
+
+#Determine %primary miRNA by cluster
+pdf(file="primiReference_AESVZMales_Percentprimirbycluster_Feb82022.pdf", paper="legal")
+VlnPlot(svz, features="percent.primiR", pt.size = 0)
+dev.off()
+#Determine %primary miRNA by condition
+pdf(file="primiReference_AESVZMales_Percentprimirbycondition_Feb82022.pdf", paper="legal")
+VlnPlot(svz, features="percent.primiR", pt.size = 0, group.by="orig.ident")
+dev.off()
+
+#Re-order identities to make bettter plots
+myLevels <- c("Vascular Endothelium", 
+              "Pericyte", 
+              "Ependymal Cell", 
+              "Immune Cells", 
+              "Microglia", 
+              "Mature Oligodendrocyte", 
+              "MFOL_1", 
+              "MFOL_2", "OPCandCOP", "Neural Stem Cell", "Astrocyte_1", "Astrocyte_2", "Immature Neuron", "Neuron")
+
+factor(Idents(svz), levels= myLevels)
+Idents(svz) <- factor(Idents(svz), levels= myLevels)
+
+#Create a dotplot of all markers
+pdf(file="primiReference_AESVZMales_DotPlotAllMarkers_June232021.pdf", paper="legal")
+DotPlot(svz, features=Allmarkers, col.min=0, cols=c("white", "blue")) + theme(text=element_text(size=8), axis.text.x = element_text(angle = 45, hjust = 1))
+dev.off()
+
+#PercentComposition 
+CellNumber <- table(Idents(svz), svz$orig.ident)
+PercentCell <- prop.table(table(Idents(svz), svz$orig.ident), margin = 2)
+write.csv(CellNumber, file="primiReference_CellNumberSVZ_Feb82022.csv")
+write.csv(PercentCell, file="primiReference_PercentCellbycluster_SVZ_Feb82022.csv")
+
+
+#Differential Expression by Condition
+#Always comparing to Old mice since they're put as ident 1
+svz$celltype.gender <- paste(levels(svz), svz$orig.ident, sep = "_")
+Idents(svz) <- "celltype.gender"
+
+diff.ageM.Astrocyte1 <- FindMarkers(svz, ident.1 = "Astrocyte_1_SVZ_Old_Male", ident.2 = "Astrocyte_1_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.Astrocyte1, n = 15)
+write.csv(diff.ageM.Astrocyte1, file="SVZ_DEbyAge_Male_Astrocyte1_June232021.csv")
+
+diff.ageM.Astrocyte2 <- FindMarkers(svz, ident.1 = "Astrocyte_2_SVZ_Old_Male", ident.2 = "Astrocyte_2_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.Astrocyte2, n = 15)
+write.csv(diff.ageM.Astrocyte2, file="SVZ_DEbyAge_Male_Astrocyte2_June232021.csv")
+
+diff.ageM.Astrocyte3 <- FindMarkers(svz, ident.1 = "Astrocyte_3_SVZ_Old_Male", ident.2 = "Astrocyte_3_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.Astrocyte3, n = 15)
+write.csv(diff.ageM.Astrocyte3, file="SVZ_DEbyAge_Male_Astrocyte3_June232021.csv")
+
+diff.ageM.NSC <- FindMarkers(svz, ident.1 = "Neural Stem Cell_SVZ_Old_Male", ident.2 = "Neural Stem Cell_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.NSC, n = 15)
+write.csv(diff.ageM.NSC, file="SVZ_DEbyAge_Male_NeuralStemCell_June232021.csv")
+
+
+diff.ageM.MFOL1 <- FindMarkers(svz, ident.1 = "MFOL_1_SVZ_Old_Male", ident.2 = "MFOL_1_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.MFOL1, n = 15)
+write.csv(diff.ageM.MFOL1, file="SVZ_DEbyAge_Male_MFOL1_June232021.csv")
+
+diff.ageM.MFOL2 <- FindMarkers(svz, ident.1 = "MFOL_2_SVZ_Old_Male", ident.2 = "MFOL_2_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.MFOL2, n = 15)
+write.csv(diff.ageM.MFOL2, file="SVZ_DEbyAge_Male_MFOL2_June232021.csv")
+
+diff.ageM.OPCandCOP1 <- FindMarkers(svz, ident.1 = "OPCandCOP_1_SVZ_Old_Male", ident.2 = "OPCandCOP_1_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.OPCandCOP1, n = 15)
+write.csv(diff.ageM.OPCandCOP1, file="SVZ_DEbyAge_Male_OPCandCOP1_June232021.csv")
+
+diff.ageM.Unknown_3 <- FindMarkers(svz, ident.1 = "Unknown_3_SVZ_Old_Male", ident.2 = "Unknown_3_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.Unknown_3, n = 15)
+write.csv(diff.ageM.Unknown_3, file="SVZ_DEbyAge_Male_Unknown_3_June232021.csv")
+
+diff.ageM.Mature <- FindMarkers(svz, ident.1 = "Mature Oligodendrocyte_SVZ_Old_Male", ident.2 = "Mature Oligodendrocyte_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.Mature, n = 15)
+write.csv(diff.ageM.Mature, file="SVZ_DEbyAge_Male_MatureOligodendrocyte_June232021.csv")
+
+diff.ageM.Microglia <- FindMarkers(svz, ident.1 = "Microglia_SVZ_Old_Male", ident.2 = "Microglia_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.Microglia, n = 15)
+write.csv(diff.ageM.Microglia, file="SVZ_DEbyAge_Male_Microglia_June232021.csv")
+
+diff.ageM.Pericyte <- FindMarkers(svz, ident.1 = "Pericyte_SVZ_Old_Male", ident.2 = "Pericyte_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.Pericyte, n = 15)
+write.csv(diff.ageM.Pericyte, file="SVZ_DEbyAge_Male_Pericyte_June232021.csv")
+
+diff.ageM.ep <- FindMarkers(svz, ident.1 = "Ependymal Cell_SVZ_Old_Male", ident.2 = "Ependymal Cell_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.ep, n = 15)
+write.csv(diff.ageM.ep, file="SVZ_DEbyAge_Male_EpendymalCell_June232021.csv")
+
+diff.ageM.Neuron <- FindMarkers(svz, ident.1 = "Neuron_SVZ_Old_Male", ident.2 = "Neuron_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.Neuron, n = 15)
+write.csv(diff.ageM.Neuron, file="SVZ_DEbyAge_Male_Neuron_June232021.csv")
+
+diff.ageM.Endothelium <- FindMarkers(svz, ident.1 = "Vascular Endothelium_SVZ_Old_Male", ident.2 = "Vascular Endothelium_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.Endothelium, n = 15)
+write.csv(diff.ageM.Endothelium, file="SVZ_DEbyAge_Male_VascularEndothelium_June232021.csv")
+
+diff.ageM.ImmNeurons <- FindMarkers(svz, ident.1 = "Immature Neuron_SVZ_Old_Male", ident.2 = "Immature Neuron_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.ImmNeurons, n = 15)
+write.csv(diff.ageM.ImmNeurons, file="SVZ_DEbyAge_Male_ImmatureNeurons_June232021.csv")
+
+diff.ageM.Immune <- FindMarkers(svz, ident.1 = "Immune Cells_SVZ_Old_Male", ident.2 = "Immune Cells_SVZ_Young_Male", verbose = FALSE)
+head(diff.ageM.Immune, n = 15)
+write.csv(diff.ageM.Immune, file="SVZ_DEbyAge_Male_ImmuneCells_June232021.csv")
+
+
+
+
